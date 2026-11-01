@@ -1,0 +1,51 @@
+name: Validate Helm chart
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.3.1
+
+      - name: Lint and render chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHART_VERSION="$(tr -d '\n' < helm/chart-version)"
+          helm repo add gitlab https://charts.gitlab.io/
+          helm repo update gitlab
+          mkdir -p .tmp
+          helm pull gitlab/gitlab --version "$CHART_VERSION" --destination .tmp
+          helm lint ".tmp/gitlab-${CHART_VERSION}.tgz" \
+            --with-subcharts \
+            --values helm/values.yaml \
+            --values helm/values.production.example.yaml
+          helm lint ".tmp/gitlab-${CHART_VERSION}.tgz" \
+            --with-subcharts \
+            --values helm/values.yaml \
+            --values helm/values.lab.yaml
+          helm template gitlab gitlab/gitlab \
+            --version "$CHART_VERSION" \
+            --namespace gitlab \
+            --values helm/values.yaml \
+            --values helm/values.production.example.yaml \
+            > /dev/null
+          helm template gitlab gitlab/gitlab \
+            --version "$CHART_VERSION" \
+            --namespace gitlab \
+            --values helm/values.yaml \
+            --values helm/values.lab.yaml \
+            > /dev/null
