@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.tmp/
+.cache/
+helm/values.production.yaml
+helm/values.local.yaml
+secrets/
+*.s3cfg
+*.pem
+*.key

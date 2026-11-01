@@ -1,0 +1,33 @@
+stages:
+  - validate
+
+validate-helm:
+  image: alpine/helm:4.3.1
+  stage: validate
+  script:
+    - |
+      CHART_VERSION="$(cat helm/chart-version)"
+      helm repo add gitlab https://charts.gitlab.io/
+      helm repo update gitlab
+      mkdir -p .tmp
+      helm pull gitlab/gitlab --version "$CHART_VERSION" --destination .tmp
+      helm lint ".tmp/gitlab-${CHART_VERSION}.tgz" \
+        --with-subcharts \
+        --values helm/values.yaml \
+        --values helm/values.production.example.yaml
+      helm lint ".tmp/gitlab-${CHART_VERSION}.tgz" \
+        --with-subcharts \
+        --values helm/values.yaml \
+        --values helm/values.lab.yaml
+      helm template gitlab gitlab/gitlab \
+        --version "$CHART_VERSION" \
+        --namespace gitlab \
+        --values helm/values.yaml \
+        --values helm/values.production.example.yaml \
+        > /dev/null
+      helm template gitlab gitlab/gitlab \
+        --version "$CHART_VERSION" \
+        --namespace gitlab \
+        --values helm/values.yaml \
+        --values helm/values.lab.yaml \
+        > /dev/null

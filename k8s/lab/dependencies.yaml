@@ -1,0 +1,150 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitlab-postgresql-init
+  namespace: gitlab
+data:
+  01-extensions.sql: |
+    CREATE EXTENSION IF NOT EXISTS amcheck;
+    CREATE EXTENSION IF NOT EXISTS btree_gist;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab-postgresql
+  namespace: gitlab
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gitlab-postgresql
+  template:
+    metadata:
+      labels:
+        app: gitlab-postgresql
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18.6-alpine
+          args:
+            - -c
+            - max_locks_per_transaction=256
+          env:
+            - name: POSTGRES_DB
+              value: gitlabhq_production
+            - name: POSTGRES_USER
+              value: gitlab
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-postgresql-password
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U gitlab -d gitlabhq_production
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: database
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: database
+          emptyDir: {}
+        - name: init
+          configMap:
+            name: gitlab-postgresql-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-postgresql
+  namespace: gitlab
+spec:
+  selector:
+    app: gitlab-postgresql
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab-redis
+  namespace: gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitlab-redis
+  template:
+    metadata:
+      labels:
+        app: gitlab-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2.17-alpine
+          args:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --maxmemory
+            - 128mb
+            - --maxmemory-policy
+            - noeviction
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-redis
+  namespace: gitlab
+spec:
+  selector:
+    app: gitlab-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

@@ -1,0 +1,103 @@
+global:
+  edition: ce
+  hosts:
+    domain: gitlab.local
+    https: false
+  gatewayApi:
+    enabled: true
+    installEnvoy: true
+    configureEnvoy: true
+    configureCertmanager: false
+    httpToHttpsRedirect: false
+  ingress:
+    enabled: false
+    configureCertmanager: false
+  psql:
+    host: gitlab-postgresql.gitlab.svc.cluster.local
+    port: 5432
+    username: gitlab
+    password:
+      secret: gitlab-postgresql-password
+      key: password
+    main:
+      database: gitlabhq_production
+    ci:
+      database: gitlabhq_production
+      databaseTasks: false
+  redis:
+    host: gitlab-redis.gitlab.svc.cluster.local
+    port: 6379
+    auth:
+      enabled: false
+  gitaly:
+    enabled: true
+    authToken:
+      secret: gitlab-gitaly-token
+      key: token
+  rails:
+    bootsnap:
+      enabled: false
+  appConfig:
+    object_store:
+      enabled: false
+    artifacts:
+      enabled: false
+    lfs:
+      enabled: false
+    uploads:
+      enabled: false
+    packages:
+      enabled: false
+
+installCertmanager: false
+
+nginx-ingress:
+  enabled: false
+
+prometheus:
+  install: false
+
+gitlab-runner:
+  install: false
+
+registry:
+  enabled: false
+
+gitlab:
+  webservice:
+    minReplicas: 1
+    resources:
+      limits:
+        memory: 2500M
+      requests:
+        cpu: 100m
+        memory: 1500M
+    workhorse:
+      resources:
+        limits:
+          memory: 100M
+        requests:
+          cpu: 10m
+          memory: 10M
+  sidekiq:
+    minReplicas: 1
+    resources:
+      limits:
+        memory: 1.5G
+      requests:
+        cpu: 50m
+        memory: 625M
+  gitlab-shell:
+    minReplicas: 1
+  toolbox:
+    enabled: false
+
+gatewayApiResources:
+  gateway:
+    protocol: HTTP
+  envoy:
+    proxySpec:
+      provider:
+        kubernetes:
+          envoyService:
+            type: NodePort

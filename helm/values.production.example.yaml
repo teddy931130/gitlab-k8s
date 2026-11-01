@@ -1,0 +1,22 @@
+global:
+  hosts:
+    domain: example.invalid
+
+  psql:
+    host: postgresql.example.invalid
+    port: 5432
+    database: gitlabhq_production
+    username: gitlab
+
+  redis:
+    host: redis.example.invalid
+    port: 6379
+
+  gitaly:
+    external:
+      - name: default
+        hostname: gitaly.example.invalid
+        port: 8075
+
+certmanager-issuer:
+  email: platform@example.invalid

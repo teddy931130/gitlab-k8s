@@ -1,0 +1,71 @@
+global:
+  edition: ce
+
+  hosts:
+    https: true
+
+  gatewayApi:
+    enabled: true
+    installEnvoy: true
+    configureEnvoy: true
+    configureCertmanager: true
+    httpToHttpsRedirect: true
+
+  minio:
+    enabled: false
+
+  psql:
+    password:
+      secret: gitlab-postgresql-password
+      key: password
+
+  redis:
+    auth:
+      enabled: true
+      secret: gitlab-redis-password
+      key: password
+
+  gitaly:
+    enabled: false
+    authToken:
+      secret: gitlab-gitaly-token
+      key: token
+
+  appConfig:
+    object_store:
+      enabled: true
+      connection:
+        secret: gitlab-object-storage
+        key: connection
+    lfs:
+      bucket: gitlab-lfs
+    artifacts:
+      bucket: gitlab-artifacts
+    uploads:
+      bucket: gitlab-uploads
+    packages:
+      bucket: gitlab-packages
+    backups:
+      bucket: gitlab-backups
+      tmpBucket: gitlab-backups-tmp
+
+  registry:
+    bucket: gitlab-registry
+
+installCertmanager: true
+
+certmanager-issuer:
+  email: email@example.com
+
+registry:
+  storage:
+    secret: gitlab-registry-storage
+    key: config
+
+gitlab:
+  toolbox:
+    backups:
+      objectStorage:
+        config:
+          secret: gitlab-backup-s3cfg
+          key: config
