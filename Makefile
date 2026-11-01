@@ -9,6 +9,7 @@ BASE_VALUES := helm/values.yaml
 EXAMPLE_VALUES := helm/values.production.example.yaml
 PRODUCTION_VALUES := helm/values.production.yaml
 LAB_VALUES := helm/values.lab.yaml
+LAB_BOOTSTRAP_VALUES := helm/values.lab-bootstrap.yaml
 
 .PHONY: validate check-production-config namespace gateway-crds deploy deploy-lab status
 
@@ -20,6 +21,13 @@ validate:
 		--namespace "$(NAMESPACE)" \
 		--values $(BASE_VALUES) \
 		--values $(EXAMPLE_VALUES) \
+		> /dev/null
+	helm template $(RELEASE) $(CHART) \
+		--version "$(CHART_VERSION)" \
+		--namespace "$(NAMESPACE)" \
+		--values $(BASE_VALUES) \
+		--values $(LAB_VALUES) \
+		--values $(LAB_BOOTSTRAP_VALUES) \
 		> /dev/null
 	helm template $(RELEASE) $(CHART) \
 		--version "$(CHART_VERSION)" \
@@ -95,6 +103,31 @@ deploy-lab: gateway-crds
 	kubectl apply -f k8s/lab/dependencies.yaml
 	helm repo add gitlab $(CHART_REPOSITORY) --force-update
 	helm repo update gitlab
+	helm template $(RELEASE) $(CHART) \
+		--version "$(CHART_VERSION)" \
+		--namespace "$(NAMESPACE)" \
+		--values $(BASE_VALUES) \
+		--values $(LAB_VALUES) \
+		--values $(LAB_BOOTSTRAP_VALUES) \
+		> /dev/null
+	helm upgrade --install $(RELEASE) $(CHART) \
+		--version "$(CHART_VERSION)" \
+		--namespace "$(NAMESPACE)" \
+		--create-namespace \
+		--timeout 20m \
+		--wait \
+		--values $(BASE_VALUES) \
+		--values $(LAB_VALUES) \
+		--values $(LAB_BOOTSTRAP_VALUES)
+	NAMESPACE="$(NAMESPACE)" python3 k8s/lab/configure-object-storage.py
+	kubectl apply -f k8s/lab/object-storage.yaml
+	kubectl wait --for=condition=Available deployment/gitlab-minio \
+		--namespace "$(NAMESPACE)" --timeout=5m
+	kubectl delete job gitlab-object-storage-buckets \
+		--namespace "$(NAMESPACE)" --ignore-not-found
+	kubectl apply -f k8s/lab/object-storage-buckets.yaml
+	kubectl wait --for=condition=Complete job/gitlab-object-storage-buckets \
+		--namespace "$(NAMESPACE)" --timeout=5m
 	helm template $(RELEASE) $(CHART) \
 		--version "$(CHART_VERSION)" \
 		--namespace "$(NAMESPACE)" \

@@ -19,6 +19,11 @@ validate-helm:
         --with-subcharts \
         --values helm/values.yaml \
         --values helm/values.lab.yaml
+      helm lint ".tmp/gitlab-${CHART_VERSION}.tgz" \
+        --with-subcharts \
+        --values helm/values.yaml \
+        --values helm/values.lab.yaml \
+        --values helm/values.lab-bootstrap.yaml
       helm template gitlab gitlab/gitlab \
         --version "$CHART_VERSION" \
         --namespace gitlab \
@@ -30,4 +35,11 @@ validate-helm:
         --namespace gitlab \
         --values helm/values.yaml \
         --values helm/values.lab.yaml \
+        > /dev/null
+      helm template gitlab gitlab/gitlab \
+        --version "$CHART_VERSION" \
+        --namespace gitlab \
+        --values helm/values.yaml \
+        --values helm/values.lab.yaml \
+        --values helm/values.lab-bootstrap.yaml \
         > /dev/null

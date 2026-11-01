@@ -4,7 +4,7 @@ This repository deploys GitLab Self-Managed with GitLab's official Helm chart. I
 
 The configuration is a production-oriented, provider-neutral starting point. It expects external PostgreSQL, Redis or Valkey, S3-compatible object storage, and Gitaly. Those services, the Kubernetes cluster, DNS, and the secret-management system must be provisioned for your environment before installation. No cloud provider, domain, credentials, or Kubernetes context is assumed here.
 
-The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s/lab/dependencies.yaml) are only for the disposable playground: they run PostgreSQL `18.6` and Redis `7.2.17` in-cluster with `emptyDir` storage. They are not a production database setup. The playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; the lab values reduce replicas and resources for evaluation only. Because the lab disables object storage, if CI job live-trace incremental logging is enabled, GitLab rejects admin settings updates until artifact object storage is configured or incremental logging is disabled. This can prevent unrelated settings, such as public sign-up, from saving. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
+The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/lab) are only for the disposable playground: PostgreSQL `18.6`, Redis `7.2.17`, and RustFS `1.0.4` run in-cluster with `emptyDir` storage. RustFS provides S3-compatible object storage; the lab enables Container Registry and bundled Prometheus, and serves the Gateway over HTTPS with the chart-generated self-signed certificate. It is not production-ready: the playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; lab data is lost when its pods are recreated; and the self-signed CA must be trusted by clients. GitLab Runner remains disabled because it requires a runner authentication token and the chart warns that runners do not work properly with self-signed certificates. The cluster also lacks Metrics Server, so HPA CPU targets remain unavailable even with Prometheus installed. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
 
 ## Repository layout
 
@@ -20,13 +20,17 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s
 ├── docs/
 │   └── operations.md
 ├── helm/
+│   ├── values.lab-bootstrap.yaml
 │   ├── chart-version
 │   ├── values.lab.yaml
 │   ├── values.yaml
 │   └── values.production.example.yaml
 └── k8s/
     └── lab/
-        └── dependencies.yaml
+        ├── configure-object-storage.py
+        ├── dependencies.yaml
+        ├── object-storage-buckets.yaml
+        └── object-storage.yaml
 ```
 
 `helm/values.production.yaml` is the ignored, environment-specific overlay. Keep credentials out of both values files; they reference Kubernetes Secrets by name.
@@ -68,7 +72,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s
 
    This installs the Gateway API and Envoy Gateway CRDs, pre-renders the production values, then runs `helm upgrade --install` with the pinned chart and waits up to 20 minutes for resources to become ready. The `ENVOY_GATEWAY_VERSION` in the Makefile must match the bundled Envoy Gateway dependency of the pinned GitLab chart. It requires a working Kubernetes context and the external services and Secrets to be ready first.
 
-For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. This applies the lab PostgreSQL/Redis dependencies and the Gateway API GitLab overlay. The lab database uses `emptyDir`: applying an unchanged manifest does not replace its pod, but recreating the pod (for example, after changing its image or configuration) loses the database. Export and verify a backup before planned PostgreSQL major-version upgrades.
+For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target first installs the minimal chart configuration so its shared-secrets job can generate object-storage credentials, then configures RustFS and its buckets before enabling Registry, Prometheus, and HTTPS. The PostgreSQL, Redis, and RustFS data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
 8. Inspect deployment health:
 
    ```sh
@@ -77,6 +81,17 @@ For the disposable playground setup only, provision the `gitlab-postgresql-passw
    ```
 
    Configure DNS to the external address reported by the Gateway's Envoy service. Check `helm status gitlab -n gitlab`, pod events, and logs if any component is not ready.
+
+The lab Gateway uses a chart-generated self-signed certificate. Retrieve and trust its CA only on clients that need to access this playground:
+
+```sh
+kubectl get secret gitlab-wildcard-tls-ca -n gitlab \
+  -o jsonpath='{.data.cfssl_ca}' |
+  python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.buffer.read()))' \
+  > gitlab.gitlab.local.ca.pem
+```
+
+Port-forward the Gateway service to local port `8443` and visit `https://gitlab.gitlab.local:8443` (with `gitlab.gitlab.local` mapped to `127.0.0.1`). The lab Runner remains disabled until an instance runner is created in GitLab and its authentication token is securely provisioned; use a trusted certificate for a runner-enabled setup.
 
 The chart's initial root password is generated during installation. Retrieve it securely, sign in, change it, and disable or restrict public sign-up as appropriate:
 

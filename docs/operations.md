@@ -6,6 +6,7 @@ This guide covers the routine work around the GitLab Helm release. Adapt backup 
 
 - Check `helm status gitlab -n gitlab`, `kubectl get pods,services -n gitlab`, and pod events after installs and upgrades.
 - Monitor the Kubernetes workloads and the external PostgreSQL, Redis/Valkey, Gitaly, and object-storage services. A healthy set of Pods alone does not establish that GitLab's dependencies are healthy.
+- In the disposable lab only, RustFS provides object storage and Prometheus scrapes GitLab components. Both are in-cluster demonstrations, not substitutes for durable object storage or a production monitoring stack.
 - Alert on persistent-volume capacity where applicable, database and Redis availability, Gitaly health, object-storage errors, certificate expiry, and failed backup jobs.
 - Confirm the Gateway has an external address and that DNS, HTTPS, SSH, Registry, and KAS access work as intended.
 
@@ -21,6 +22,8 @@ Follow the current [GitLab Helm backup procedure](https://docs.gitlab.com/charts
 - Test restoration in a separate environment and retain the original backup archive name.
 
 The [restore procedure](https://docs.gitlab.com/charts/backup-restore/restore/) documents the supported sequence and compatibility constraints. A restore is not complete until the application, repositories, object data, and secrets have been verified together.
+
+The lab's PostgreSQL, Redis, and RustFS data use `emptyDir` volumes and are lost when their pods are recreated. Do not store data that needs to survive a playground restart or pod replacement.
 
 ## Upgrades
 

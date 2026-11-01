@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gitlab-object-storage-buckets
+  namespace: gitlab
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-buckets
+          image: amazon/aws-cli:2.39.3
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              set -eu
+              export AWS_DEFAULT_REGION=us-east-1
+              export AWS_EC2_METADATA_DISABLED=true
+              for bucket in gitlab-artifacts gitlab-lfs gitlab-uploads gitlab-packages gitlab-backups gitlab-backups-tmp gitlab-registry; do
+                if ! aws --endpoint-url "$S3_ENDPOINT" s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+                  aws --endpoint-url "$S3_ENDPOINT" s3api create-bucket --bucket "$bucket"
+                fi
+              done
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-minio-auth
+                  key: root-user
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-minio-auth
+                  key: root-password
+            - name: S3_ENDPOINT
+              value: http://gitlab-minio.gitlab.svc.cluster.local:9000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi

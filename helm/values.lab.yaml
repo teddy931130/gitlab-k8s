@@ -2,7 +2,7 @@ global:
   edition: ce
   hosts:
     domain: gitlab.local
-    https: false
+    https: true
   gatewayApi:
     enabled: true
     installEnvoy: true
@@ -39,15 +39,24 @@ global:
       enabled: false
   appConfig:
     object_store:
-      enabled: false
+      enabled: true
     artifacts:
-      enabled: false
+      enabled: true
+      bucket: gitlab-artifacts
     lfs:
-      enabled: false
+      enabled: true
+      bucket: gitlab-lfs
     uploads:
-      enabled: false
+      enabled: true
+      bucket: gitlab-uploads
     packages:
-      enabled: false
+      enabled: true
+      bucket: gitlab-packages
+    backups:
+      bucket: gitlab-backups
+      tmpBucket: gitlab-backups-tmp
+  registry:
+    bucket: gitlab-registry
 
 installCertmanager: false
 
@@ -55,13 +64,29 @@ nginx-ingress:
   enabled: false
 
 prometheus:
-  install: false
+  install: true
+  server:
+    retention: 24h
+    persistentVolume:
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
 
 gitlab-runner:
   install: false
 
 registry:
-  enabled: false
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
 
 gitlab:
   webservice:
@@ -94,7 +119,9 @@ gitlab:
 
 gatewayApiResources:
   gateway:
-    protocol: HTTP
+    protocol: HTTPS
+    tls:
+      secretName: gitlab-wildcard-tls
   envoy:
     proxySpec:
       provider:

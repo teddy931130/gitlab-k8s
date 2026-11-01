@@ -1,0 +1,26 @@
+global:
+  hosts:
+    https: false
+  appConfig:
+    object_store:
+      enabled: false
+    artifacts:
+      enabled: false
+    lfs:
+      enabled: false
+    uploads:
+      enabled: false
+    packages:
+      enabled: false
+
+prometheus:
+  install: false
+
+registry:
+  enabled: false
+
+gatewayApiResources:
+  gateway:
+    protocol: HTTP
+    tls:
+      secretName: ""
