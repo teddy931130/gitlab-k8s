@@ -4,12 +4,16 @@ This repository deploys GitLab Self-Managed with GitLab's official Helm chart. I
 
 The configuration is a production-oriented, provider-neutral starting point. It expects external PostgreSQL, Redis or Valkey, S3-compatible object storage, and Gitaly. Those services, the Kubernetes cluster, DNS, and the secret-management system must be provisioned for your environment before installation. No cloud provider, domain, credentials, or Kubernetes context is assumed here.
 
-The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s/lab/dependencies.yaml) are only for the disposable playground: they run PostgreSQL `18.6` and Redis `7.2.17` in-cluster with `emptyDir` storage. They are not a production database setup. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
+The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s/lab/dependencies.yaml) are only for the disposable playground: they run PostgreSQL `18.6` and Redis `7.2.17` in-cluster with `emptyDir` storage. They are not a production database setup. The playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; the lab values reduce replicas and resources for evaluation only. Because the lab disables object storage, if CI job live-trace incremental logging is enabled, GitLab rejects admin settings updates until artifact object storage is configured or incremental logging is disabled. This can prevent unrelated settings, such as public sign-up, from saving. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
 
 ## Repository layout
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── validate-helm.yml
+├── .gitignore
 ├── .gitlab-ci.yml
 ├── Makefile
 ├── README.md
@@ -33,7 +37,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s
 2. Plan cluster capacity using GitLab's sizing and reference-architecture guidance. GitLab's cloud setup guide says the chart is intended for a cluster with at least 8 vCPU and 30 GB RAM; do not treat chart defaults as workload-specific sizing.
 3. Provision supported external PostgreSQL, Redis or Valkey, and Gitaly services. PostgreSQL needs the GitLab-required `amcheck`, `btree_gist`, and `pg_trgm` extensions and a database/user with the required privileges. Match PostgreSQL and Redis/Valkey versions to the [requirements for the pinned GitLab release](https://docs.gitlab.com/install/requirements/#postgresql). Gitaly must be reachable from the cluster and use the matching authentication token.
 4. Provision durable object storage and create a distinct bucket for each configured data type and for backups. The sample values use S3-compatible storage; backup/restore support should be checked against the selected backend.
-5. Ensure the cluster's storage classes are suitable for any chart-managed persistent volumes. GitLab recommends fast storage and a `Retain` reclaim policy; changing storage after installation requires additional migration work.
+5. Ensure the cluster's storage classes are suitable for any chart-managed persistent volumes. GitLab recommends fast SSD storage and a `Retain` reclaim policy for the default StorageClass; Gitaly's StatefulSet PVCs have different retention behavior. Changing storage after installation requires additional migration work.
 6. Plan DNS and TLS. The chart-managed Gateway API/Envoy Gateway setup expects the required Gateway API support. Point the GitLab, Registry, and KAS hostnames at the Gateway's external address. The example uses cert-manager and Let's Encrypt, so the domain must be publicly reachable for ACME validation. For private installations, replace that TLS configuration with your certificate workflow.
 7. Create the required Kubernetes Secrets in the `gitlab` namespace before deploying. Prefer your organization's external secret manager or workload identity where supported. See [Secrets and credentials](#secrets-and-credentials).
 
@@ -64,7 +68,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab dependencies](./k8s
 
    This installs the Gateway API and Envoy Gateway CRDs, pre-renders the production values, then runs `helm upgrade --install` with the pinned chart and waits up to 20 minutes for resources to become ready. The `ENVOY_GATEWAY_VERSION` in the Makefile must match the bundled Envoy Gateway dependency of the pinned GitLab chart. It requires a working Kubernetes context and the external services and Secrets to be ready first.
 
-For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. This applies the lab PostgreSQL/Redis dependencies and the Gateway API GitLab overlay. PostgreSQL major-version changes require a planned backup and restore; applying the lab dependency manifest itself replaces the disposable database pod.
+For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. This applies the lab PostgreSQL/Redis dependencies and the Gateway API GitLab overlay. The lab database uses `emptyDir`: applying an unchanged manifest does not replace its pod, but recreating the pod (for example, after changing its image or configuration) loses the database. Export and verify a backup before planned PostgreSQL major-version upgrades.
 8. Inspect deployment health:
 
    ```sh
@@ -79,7 +83,8 @@ The chart's initial root password is generated during installation. Retrieve it 
 ```sh
 kubectl get secret gitlab-gitlab-initial-root-password \
   --namespace gitlab \
-  --output jsonpath='{.data.password}' | base64 --decode
+  --output jsonpath='{.data.password}' |
+  python3 -c 'import base64,sys; print(base64.b64decode(sys.stdin.buffer.read()).decode())'
 ```
 
 ## Secrets and credentials
