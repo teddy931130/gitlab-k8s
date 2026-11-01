@@ -82,6 +82,8 @@ For the disposable playground setup only, provision the `gitlab-postgresql-passw
 
    Configure DNS to the external address reported by the Gateway's Envoy service. Check `helm status gitlab -n gitlab`, pod events, and logs if any component is not ready.
 
+   A successful web request does not by itself mean the Helm operation completed. Confirm the release status is `deployed`; if it is `pending-upgrade`, inspect `helm history gitlab -n gitlab` and resolve the pending release before attempting another upgrade.
+
 The lab Gateway uses a chart-generated self-signed certificate. Retrieve and trust its CA only on clients that need to access this playground:
 
 ```sh
@@ -91,7 +93,19 @@ kubectl get secret gitlab-wildcard-tls-ca -n gitlab \
   > gitlab.gitlab.local.ca.pem
 ```
 
-Port-forward the Gateway service to local port `8443` and visit `https://gitlab.gitlab.local:8443` (with `gitlab.gitlab.local` mapped to `127.0.0.1`). The lab Runner remains disabled until an instance runner is created in GitLab and its authentication token is securely provisioned; use a trusted certificate for a runner-enabled setup.
+The Gateway Envoy service name has a generated suffix. Find it with:
+
+```sh
+kubectl get services -n gitlab -o name | grep 'envoy-gitlab-gitlab-gw'
+```
+
+Forward its HTTPS service port (`443`) to local port `8080` (replace the service name below if the generated suffix differs):
+
+```sh
+kubectl -n gitlab port-forward svc/envoy-gitlab-gitlab-gw-80260869 8080:443
+```
+
+Keep the command running and visit `https://gitlab.gitlab.local:8080`. Map `gitlab.gitlab.local` to `127.0.0.1` in `/etc/hosts`; the browser must trust the lab's self-signed CA or show a certificate warning. This is HTTPS, not HTTP. The lab Runner remains disabled until an instance runner is created in GitLab and its authentication token is securely provisioned; use a trusted certificate for a runner-enabled setup.
 
 The chart's initial root password is generated during installation. Retrieve it securely, sign in, change it, and disable or restrict public sign-up as appropriate:
 
