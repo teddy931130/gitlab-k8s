@@ -15,6 +15,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 │       └── validate-helm.yml
 ├── .gitignore
 ├── .gitlab-ci.yml
+├── iximiuz-playground.yaml
 ├── Makefile
 ├── README.md
 ├── docs/
@@ -34,6 +35,8 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 ```
 
 `helm/values.production.yaml` is the ignored, environment-specific overlay. Keep credentials out of both values files; they reference Kubernetes Secrets by name.
+
+[`iximiuz-playground.yaml`](./iximiuz-playground.yaml) is a portable create-time overlay for the official `k8s-omni` base. Unlike a saved-play snapshot, it uses the base's regular VM images and installs the GitLab lab from this public repository at startup.
 
 ## Before installing
 
@@ -73,6 +76,18 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
    This installs the Gateway API and Envoy Gateway CRDs, pre-renders the production values, then runs `helm upgrade --install` with the pinned chart and waits up to 20 minutes for resources to become ready. The `ENVOY_GATEWAY_VERSION` in the Makefile must match the bundled Envoy Gateway dependency of the pinned GitLab chart. It requires a working Kubernetes context and the external services and Secrets to be ready first.
 
 For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target first installs the minimal chart configuration so its shared-secrets job can generate object-storage credentials, then configures RustFS and its buckets before enabling Registry, Prometheus, and HTTPS. The PostgreSQL, Redis, and RustFS data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
+
+### One-click Iximiuz Labs playground
+
+Create and start a fresh playground from the checked-in manifest:
+
+```sh
+labctl playground create gitlab-k8s-lab --base k8s-omni -f iximiuz-playground.yaml
+labctl playground start <generated-playground-name>
+```
+
+This is a create-time overlay, not a complete manifest for `labctl playground update`. Each user creates their own copy from `k8s-omni`. The init tasks use the default containerd/Flannel cluster configuration, generate fresh database and Gitaly credentials, then run `make deploy-lab`. Startup may take up to two hours. This requires enough Iximiuz account resources to schedule GitLab; platform resource limits can prevent GitLab from becoming ready. It uses ephemeral storage and is for testing only. The manifest contains no snapshot IDs or credentials. For access and the generated root password, follow the instructions below after startup completes.
+
 8. Inspect deployment health:
 
    ```sh
