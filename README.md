@@ -4,7 +4,7 @@ This repository deploys GitLab Self-Managed with GitLab's official Helm chart. I
 
 The configuration is a production-oriented, provider-neutral starting point. It expects external PostgreSQL, Redis or Valkey, S3-compatible object storage, and Gitaly. Those services, the Kubernetes cluster, DNS, and the secret-management system must be provisioned for your environment before installation. No cloud provider, domain, credentials, or Kubernetes context is assumed here.
 
-The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/lab) are only for the disposable playground: PostgreSQL `18.6`, Redis `7.2.17`, and RustFS `1.0.4` run in-cluster with `emptyDir` storage. RustFS provides S3-compatible object storage; the lab enables Container Registry and bundled Prometheus, and serves the Gateway over HTTPS with the chart-generated self-signed certificate. It is not production-ready: the playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; lab data is lost when its pods are recreated; and the self-signed CA must be trusted by clients. GitLab Runner remains disabled because it requires a runner authentication token and the chart warns that runners do not work properly with self-signed certificates. The cluster also lacks Metrics Server, so HPA CPU targets remain unavailable even with Prometheus installed. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
+The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/lab) are only for the disposable playground: PostgreSQL `18.6`, Redis `7.2.17`, and RustFS `1.0.4` run in-cluster, and they and the chart's Gitaly use `emptyDir` storage. RustFS provides S3-compatible object storage; the lab enables Container Registry and bundled Prometheus, and serves the Gateway over HTTPS with the chart-generated self-signed certificate. It is not production-ready: the playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; lab data is lost when its pods are recreated; and the self-signed CA must be trusted by clients. GitLab Runner remains disabled because it requires a runner authentication token and the chart warns that runners do not work properly with self-signed certificates. The cluster also lacks Metrics Server, so HPA CPU targets remain unavailable even with Prometheus installed. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
 
 ## Repository layout
 
@@ -15,28 +15,34 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 │       └── validate-helm.yml
 ├── .gitignore
 ├── .gitlab-ci.yml
-├── iximiuz-playground.yaml
 ├── Makefile
 ├── README.md
 ├── docs/
 │   └── operations.md
 ├── helm/
-│   ├── values.lab-bootstrap.yaml
 │   ├── chart-version
 │   ├── values.lab.yaml
 │   ├── values.yaml
 │   └── values.production.example.yaml
-└── k8s/
-    └── lab/
-        ├── configure-object-storage.py
-        ├── dependencies.yaml
-        ├── object-storage-buckets.yaml
-        └── object-storage.yaml
+├── k8s/
+│   └── lab/
+│       ├── configure-object-storage.py
+│       ├── dependencies.yaml
+│       ├── object-storage-buckets.yaml
+│       └── object-storage.yaml
+├── playground/
+│   └── iximiuz/
+│       ├── gitlab-web.yaml
+│       ├── manifest.yaml
+│       ├── publish.sh
+│       └── render_manifest.py
+└── tests/
+    └── test_playground_manifest.py
 ```
 
 `helm/values.production.yaml` is the ignored, environment-specific overlay. Keep credentials out of both values files; they reference Kubernetes Secrets by name.
 
-[`iximiuz-playground.yaml`](./iximiuz-playground.yaml) is a portable create-time overlay for the official `k8s-omni` base. Unlike a saved-play snapshot, it uses the base's regular VM images and installs the GitLab lab from this public repository at startup.
+[`playground/iximiuz/`](./playground/iximiuz) holds the complete iximiuz Labs playground manifest that builds a fresh cluster and deploys the lab at startup. See [Iximiuz Labs playground](#iximiuz-labs-playground).
 
 ## Before installing
 
@@ -75,18 +81,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 
    This installs the Gateway API and Envoy Gateway CRDs, pre-renders the production values, then runs `helm upgrade --install` with the pinned chart and waits up to 20 minutes for resources to become ready. The `ENVOY_GATEWAY_VERSION` in the Makefile must match the bundled Envoy Gateway dependency of the pinned GitLab chart. It requires a working Kubernetes context and the external services and Secrets to be ready first.
 
-For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target first installs the minimal chart configuration so its shared-secrets job can generate object-storage credentials, then configures RustFS and its buckets before enabling Registry, Prometheus, and HTTPS. The PostgreSQL, Redis, and RustFS data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
-
-### One-click Iximiuz Labs playground
-
-Create and start a fresh playground from the checked-in manifest:
-
-```sh
-labctl playground create gitlab-k8s-lab --base k8s-omni -f iximiuz-playground.yaml
-labctl playground start <generated-playground-name>
-```
-
-This is a create-time overlay, not a complete manifest for `labctl playground update`. Each user creates their own copy from `k8s-omni`. The init tasks use the default containerd/Flannel cluster configuration, generate fresh database and Gitaly credentials, then run `make deploy-lab`. Startup may take up to two hours. This requires enough Iximiuz account resources to schedule GitLab; platform resource limits can prevent GitLab from becoming ready. It uses ephemeral storage and is for testing only. The manifest contains no snapshot IDs or credentials. For access and the generated root password, follow the instructions below after startup completes.
+For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target runs three stages, which are also separate targets: `lab-dependencies` installs the Gateway API CRDs, PostgreSQL, and Redis; `lab-object-storage` generates RustFS credentials, starts RustFS, and creates its buckets and the GitLab object-storage Secrets; `lab-gitlab` installs the chart with object storage, Registry, Prometheus, and HTTPS enabled. The PostgreSQL, Redis, RustFS, and Gitaly data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
 
 8. Inspect deployment health:
 
@@ -130,6 +125,47 @@ kubectl get secret gitlab-gitlab-initial-root-password \
   --output jsonpath='{.data.password}' |
   python3 -c 'import base64,sys; print(base64.b64decode(sys.stdin.buffer.read()).decode())'
 ```
+
+## Iximiuz Labs playground
+
+**Playground:** <https://labs.iximiuz.com/playgrounds/gitlab-k8s-lab-1781ac3c>
+
+Click **Start** and the playground builds a fresh kubeadm cluster, then deploys this lab. Nothing has to be run by hand. Startup takes about 10 minutes; two clean test runs took 6.5 and 7.5 minutes. When it finishes, click the **GitLab** tab to open GitLab in a new browser tab and sign in as `root`. The generated password is in `~/gitlab-root-password` on the dev machine.
+
+[`playground/iximiuz/manifest.yaml`](./playground/iximiuz/manifest.yaml) is the complete playground definition. It is generated by [`render_manifest.py`](./playground/iximiuz/render_manifest.py), which:
+
+- Reproduces the official `k8s-omni` cluster: a dev machine, one control plane, and two workers, using containerd and Flannel (pinned). Its machines use the base's VM images and the full resource budget of a paid plan (10 vCPU, 16 GiB).
+- Embeds the Makefile, Helm values, and `k8s/lab` manifests as startup files in `/opt/gitlab-k8s` on the dev machine. The playground runs exactly the files in the manifest and does not clone this repository.
+- Adds init tasks on the dev machine that install Helm, generate the PostgreSQL and Gitaly secrets once, and run the three `deploy-lab` stages as separate tasks, so startup progress shows which stage is running.
+- Applies [`gitlab-web.yaml`](./playground/iximiuz/gitlab-web.yaml) for the **GitLab** tab: an nginx proxy on NodePort `30080` in front of GitLab Workhorse. The Envoy Gateway only routes `gitlab.gitlab.local`, which cannot match the playground's own hostname, and GitLab would otherwise redirect the browser to that hostname. The proxy marks requests as HTTPS, sets `Origin` to the forwarded host so the Rails origin check passes (the CSRF token is still checked), and rewrites absolute redirects to relative ones. The tab opens in a new window because GitLab refuses to render inside a frame.
+
+The Gateway still serves `https://gitlab.gitlab.local` inside the cluster, as described above, and GitLab uses that URL in clone links and emails.
+
+### Updating the playground
+
+After changing the Makefile, Helm values, lab manifests, or the renderer, re-render and publish with `labctl` installed and authenticated:
+
+```sh
+labctl auth login
+bash playground/iximiuz/publish.sh
+```
+
+`publish.sh` renders to a temporary file, runs `labctl playground update`, and only then records the result in `manifest.yaml`. Running sessions keep the old definition; start a new session to test a change:
+
+```sh
+labctl playground start gitlab-k8s-lab-1781ac3c
+```
+
+`python3 -m unittest discover -s tests` checks that the checked-in manifest matches the sources, that every lab file is embedded, and that the init tasks form a valid dependency graph.
+
+To create a separate copy, for example on another account, render it under a new name, create it from the `k8s-omni` base, then set `DEFAULT_NAME` in `render_manifest.py` to the suffixed name that `labctl` prints:
+
+```sh
+python3 playground/iximiuz/render_manifest.py --name gitlab-k8s-lab --output /tmp/gitlab-k8s-lab.yaml
+labctl playground create gitlab-k8s-lab --base k8s-omni -f /tmp/gitlab-k8s-lab.yaml
+```
+
+The playground is public: anyone can find, view, and start it (`accessControl` in the renderer). Each session runs on the account of whoever starts it, and generates its own credentials; the manifest contains none. Starting it needs a paid iximiuz plan: the free tier's per-playground limit is 5 vCPU and 8 GiB, which is too small for GitLab.
 
 ## Secrets and credentials
 

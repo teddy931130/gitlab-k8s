@@ -9,9 +9,9 @@ BASE_VALUES := helm/values.yaml
 EXAMPLE_VALUES := helm/values.production.example.yaml
 PRODUCTION_VALUES := helm/values.production.yaml
 LAB_VALUES := helm/values.lab.yaml
-LAB_BOOTSTRAP_VALUES := helm/values.lab-bootstrap.yaml
 
-.PHONY: validate check-production-config namespace gateway-crds deploy deploy-lab status
+.PHONY: validate check-production-config namespace gateway-crds deploy deploy-lab \
+	lab-dependencies lab-object-storage lab-gitlab status
 
 validate:
 	helm repo add gitlab $(CHART_REPOSITORY) --force-update
@@ -21,13 +21,6 @@ validate:
 		--namespace "$(NAMESPACE)" \
 		--values $(BASE_VALUES) \
 		--values $(EXAMPLE_VALUES) \
-		> /dev/null
-	helm template $(RELEASE) $(CHART) \
-		--version "$(CHART_VERSION)" \
-		--namespace "$(NAMESPACE)" \
-		--values $(BASE_VALUES) \
-		--values $(LAB_VALUES) \
-		--values $(LAB_BOOTSTRAP_VALUES) \
 		> /dev/null
 	helm template $(RELEASE) $(CHART) \
 		--version "$(CHART_VERSION)" \
@@ -98,27 +91,18 @@ deploy: check-production-config
 		--values $(BASE_VALUES) \
 		--values $(PRODUCTION_VALUES)
 
-deploy-lab: gateway-crds
+# deploy-lab runs the three lab stages in order. The Iximiuz playground runs
+# each stage as its own init task, so startup progress is visible per stage.
+deploy-lab:
+	$(MAKE) lab-dependencies
+	$(MAKE) lab-object-storage
+	$(MAKE) lab-gitlab
+
+lab-dependencies: gateway-crds
 	kubectl create namespace "$(NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/lab/dependencies.yaml
-	helm repo add gitlab $(CHART_REPOSITORY) --force-update
-	helm repo update gitlab
-	helm template $(RELEASE) $(CHART) \
-		--version "$(CHART_VERSION)" \
-		--namespace "$(NAMESPACE)" \
-		--values $(BASE_VALUES) \
-		--values $(LAB_VALUES) \
-		--values $(LAB_BOOTSTRAP_VALUES) \
-		> /dev/null
-	helm upgrade --install $(RELEASE) $(CHART) \
-		--version "$(CHART_VERSION)" \
-		--namespace "$(NAMESPACE)" \
-		--create-namespace \
-		--timeout 20m \
-		--wait \
-		--values $(BASE_VALUES) \
-		--values $(LAB_VALUES) \
-		--values $(LAB_BOOTSTRAP_VALUES)
+
+lab-object-storage:
 	NAMESPACE="$(NAMESPACE)" python3 k8s/lab/configure-object-storage.py
 	kubectl apply -f k8s/lab/object-storage.yaml
 	kubectl wait --for=condition=Available deployment/gitlab-minio \
@@ -128,6 +112,10 @@ deploy-lab: gateway-crds
 	kubectl apply -f k8s/lab/object-storage-buckets.yaml
 	kubectl wait --for=condition=Complete job/gitlab-object-storage-buckets \
 		--namespace "$(NAMESPACE)" --timeout=5m
+
+lab-gitlab:
+	helm repo add gitlab $(CHART_REPOSITORY) --force-update
+	helm repo update gitlab
 	helm template $(RELEASE) $(CHART) \
 		--version "$(CHART_VERSION)" \
 		--namespace "$(NAMESPACE)" \

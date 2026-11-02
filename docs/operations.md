@@ -23,7 +23,7 @@ Follow the current [GitLab Helm backup procedure](https://docs.gitlab.com/charts
 
 The [restore procedure](https://docs.gitlab.com/charts/backup-restore/restore/) documents the supported sequence and compatibility constraints. A restore is not complete until the application, repositories, object data, and secrets have been verified together.
 
-The lab's PostgreSQL, Redis, and RustFS data use `emptyDir` volumes and are lost when their pods are recreated. Do not store data that needs to survive a playground restart or pod replacement.
+The lab's PostgreSQL, Redis, RustFS, and Gitaly data use `emptyDir` volumes and are lost when their pods are recreated. Do not store data that needs to survive a playground restart or pod replacement.
 
 ## Upgrades
 

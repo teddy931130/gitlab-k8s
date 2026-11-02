@@ -114,6 +114,9 @@ gitlab:
         memory: 625M
   gitlab-shell:
     minReplicas: 1
+  gitaly:
+    persistence:
+      enabled: false
   toolbox:
     enabled: false
 

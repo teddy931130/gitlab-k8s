@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 
@@ -43,8 +44,33 @@ def secret(name, key, value):
     }
 
 
+def apply(documents):
+    payload = "\n---\n".join(json.dumps(document) for document in documents)
+    subprocess.run(
+        ["kubectl", "apply", "--namespace", NAMESPACE, "-f", "-"],
+        input=payload,
+        check=True,
+        text=True,
+    )
+
+
+def object_storage_auth():
+    """Return the RustFS credentials, generating them on the first run.
+
+    The GitLab chart removed its bundled MinIO, so it no longer generates these.
+    """
+    try:
+        return get_secret("gitlab-minio-auth")
+    except subprocess.CalledProcessError:
+        pass
+    auth = secret("gitlab-minio-auth", "root-user", secrets.token_hex(10))
+    auth["data"]["root-password"] = encoded(secrets.token_hex(32))
+    apply([auth])
+    return auth["data"]
+
+
 try:
-    minio_auth = get_secret("gitlab-minio-auth")
+    minio_auth = object_storage_auth()
     access_key = decode(minio_auth, "root-user")
     secret_key = decode(minio_auth, "root-password")
 
@@ -99,13 +125,7 @@ try:
         secret("gitlab-registry-storage", "config", registry_config)
     )
 
-    payload = "\n---\n".join(json.dumps(document) for document in documents)
-    subprocess.run(
-        ["kubectl", "apply", "--namespace", NAMESPACE, "-f", "-"],
-        input=payload,
-        check=True,
-        text=True,
-    )
+    apply(documents)
 except (subprocess.CalledProcessError, ValueError) as error:
     print(f"Unable to configure lab object storage: {error}", file=sys.stderr)
     sys.exit(1)
