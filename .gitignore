@@ -8,3 +8,4 @@ secrets/
 *.s3cfg
 *.pem
 *.key
+__pycache__/

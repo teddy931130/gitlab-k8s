@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  playground-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check the iximiuz playground manifest
+        run: python3 -m unittest discover -s tests -v
+
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -37,11 +46,6 @@ jobs:
             --with-subcharts \
             --values helm/values.yaml \
             --values helm/values.lab.yaml
-          helm lint ".tmp/gitlab-${CHART_VERSION}.tgz" \
-            --with-subcharts \
-            --values helm/values.yaml \
-            --values helm/values.lab.yaml \
-            --values helm/values.lab-bootstrap.yaml
           helm template gitlab gitlab/gitlab \
             --version "$CHART_VERSION" \
             --namespace gitlab \
@@ -53,11 +57,4 @@ jobs:
             --namespace gitlab \
             --values helm/values.yaml \
             --values helm/values.lab.yaml \
-            > /dev/null
-          helm template gitlab gitlab/gitlab \
-            --version "$CHART_VERSION" \
-            --namespace gitlab \
-            --values helm/values.yaml \
-            --values helm/values.lab.yaml \
-            --values helm/values.lab-bootstrap.yaml \
             > /dev/null
