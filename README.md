@@ -4,7 +4,7 @@ This repository deploys GitLab Self-Managed with GitLab's official Helm chart. I
 
 The configuration is a production-oriented, provider-neutral starting point. It expects external PostgreSQL, Redis or Valkey, S3-compatible object storage, and Gitaly. Those services, the Kubernetes cluster, DNS, and the secret-management system must be provisioned for your environment before installation. No cloud provider, domain, credentials, or Kubernetes context is assumed here.
 
-The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/lab) are only for the disposable playground: PostgreSQL `18.6`, Redis `7.2.17`, and RustFS `1.0.4` run in-cluster, and they and the chart's Gitaly use `emptyDir` storage. RustFS provides S3-compatible object storage; the lab enables Container Registry and bundled Prometheus, and serves the Gateway over HTTPS with the chart-generated self-signed certificate. It is not production-ready: the playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; lab data is lost when its pods are recreated; and the self-signed CA must be trusted by clients. GitLab Runner remains disabled because it requires a runner authentication token and the chart warns that runners do not work properly with self-signed certificates. The cluster also lacks Metrics Server, so HPA CPU targets remain unavailable even with Prometheus installed. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
+The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/lab) are only for the disposable playground: PostgreSQL `18.6`, Redis `7.2.17`, and RustFS `1.0.4` run in-cluster, and they and the chart's Gitaly use `emptyDir` storage. RustFS provides S3-compatible object storage; the lab enables Container Registry and bundled Prometheus, and serves the Gateway over HTTPS with the chart-generated self-signed certificate. A standalone GitLab Runner chart runs one untagged job at a time in the `runner` namespace and reaches GitLab through the in-cluster Workhorse service. It is not production-ready: the playground has about 11 GiB of allocatable memory, below GitLab's 30 GB chart recommendation; lab data is lost when its pods are recreated; and the self-signed CA must be trusted by external clients. The cluster also lacks Metrics Server, so HPA CPU targets remain unavailable even with Prometheus installed. GitLab 19.x supports PostgreSQL 17.x–18.x, and PostgreSQL 18.6 is its latest minor release at the time of this baseline. GitLab currently recommends the Redis 7.2 series. Refresh this baseline against the official compatibility docs and upstream chart before upgrades.
 
 ## Repository layout
 
@@ -21,12 +21,15 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 │   └── operations.md
 ├── helm/
 │   ├── chart-version
+│   ├── runner-chart-version
 │   ├── values.lab.yaml
+│   ├── values.runner.lab.yaml
 │   ├── values.yaml
 │   └── values.production.example.yaml
 ├── k8s/
 │   └── lab/
 │       ├── configure-object-storage.py
+│       ├── bootstrap-runner.py
 │       ├── dependencies.yaml
 │       ├── object-storage-buckets.yaml
 │       └── object-storage.yaml
@@ -81,7 +84,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 
    This installs the Gateway API and Envoy Gateway CRDs, pre-renders the production values, then runs `helm upgrade --install` with the pinned chart and waits up to 20 minutes for resources to become ready. The `ENVOY_GATEWAY_VERSION` in the Makefile must match the bundled Envoy Gateway dependency of the pinned GitLab chart. It requires a working Kubernetes context and the external services and Secrets to be ready first.
 
-For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target runs three stages, which are also separate targets: `lab-dependencies` installs the Gateway API CRDs, PostgreSQL, and Redis; `lab-object-storage` generates RustFS credentials, starts RustFS, and creates its buckets and the GitLab object-storage Secrets; `lab-gitlab` installs the chart with object storage, Registry, Prometheus, and HTTPS enabled. The PostgreSQL, Redis, RustFS, and Gitaly data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
+For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target runs four stages, which are also separate targets: `lab-dependencies` installs the Gateway API CRDs, PostgreSQL, and Redis; `lab-object-storage` generates RustFS credentials, starts RustFS, and creates its buckets and the GitLab object-storage Secrets; `lab-gitlab` installs the chart with object storage, Registry, Prometheus, and HTTPS enabled; `lab-runner` creates an instance runner and installs the separately pinned GitLab Runner chart in the `runner` namespace. The bootstrap generates a short-lived `create_runner` access token within the lab, revokes it after creating the runner, and stores the runner authentication token only in a Kubernetes Secret. The PostgreSQL, Redis, RustFS, and Gitaly data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
 
 8. Inspect deployment health:
 
@@ -115,7 +118,7 @@ Forward its HTTPS service port (`443`) to local port `8080` (replace the service
 kubectl -n gitlab port-forward svc/envoy-gitlab-gitlab-gw-80260869 8080:443
 ```
 
-Keep the command running and visit `https://gitlab.gitlab.local:8080`. Map `gitlab.gitlab.local` to `127.0.0.1` in `/etc/hosts`; the browser must trust the lab's self-signed CA or show a certificate warning. This is HTTPS, not HTTP. The lab Runner remains disabled until an instance runner is created in GitLab and its authentication token is securely provisioned; use a trusted certificate for a runner-enabled setup.
+Keep the command running and visit `https://gitlab.gitlab.local:8080`. Map `gitlab.gitlab.local` to `127.0.0.1` in `/etc/hosts`; the browser must trust the lab's self-signed CA or show a certificate warning. This is HTTPS, not HTTP. The lab Runner uses the internal Workhorse URL for API requests, repository cloning, and artifacts, so it does not require this external hostname to resolve from job pods.
 
 The chart's initial root password is generated during installation. Retrieve it securely, sign in, change it, and disable or restrict public sign-up as appropriate:
 
@@ -130,16 +133,16 @@ kubectl get secret gitlab-gitlab-initial-root-password \
 
 **Playground:** <https://labs.iximiuz.com/playgrounds/gitlab-k8s-lab-1781ac3c>
 
-Click **Start** and the playground builds a fresh kubeadm cluster, then deploys this lab. Nothing has to be run by hand. Startup takes about 10 minutes; two clean test runs took 6.5 and 7.5 minutes. When it finishes, click the **GitLab** tab to open GitLab in a new browser tab and sign in as `root`. The generated password is in `~/gitlab-root-password` on the dev machine.
+Click **Start** and the playground builds a fresh kubeadm cluster, then deploys this lab. Nothing has to be run by hand. Allow about 10–15 minutes for startup. When it finishes, click the **GitLab** tab to open GitLab in a new browser tab and sign in as `root`. The generated password is in `~/gitlab-root-password` on the dev machine.
 
 [`playground/iximiuz/manifest.yaml`](./playground/iximiuz/manifest.yaml) is the complete playground definition. It is generated by [`render_manifest.py`](./playground/iximiuz/render_manifest.py), which:
 
 - Reproduces the official `k8s-omni` cluster: a dev machine, one control plane, and two workers, using containerd and Flannel (pinned). Its machines use the base's VM images and the full resource budget of a paid plan (10 vCPU, 16 GiB).
 - Embeds the Makefile, Helm values, and `k8s/lab` manifests as startup files in `/opt/gitlab-k8s` on the dev machine. The playground runs exactly the files in the manifest and does not clone this repository.
-- Adds init tasks on the dev machine that install Helm, generate the PostgreSQL and Gitaly secrets once, and run the three `deploy-lab` stages as separate tasks, so startup progress shows which stage is running.
+- Adds init tasks on the dev machine that install Helm, generate the PostgreSQL and Gitaly secrets once, and run the four `deploy-lab` stages as separate tasks, so startup progress shows which stage is running. The runner stage creates its authentication token after GitLab is ready.
 - Applies [`gitlab-web.yaml`](./playground/iximiuz/gitlab-web.yaml) for the **GitLab** tab: an nginx proxy on NodePort `30080` in front of GitLab Workhorse. The Envoy Gateway only routes `gitlab.gitlab.local`, which cannot match the playground's own hostname, and GitLab would otherwise redirect the browser to that hostname. The proxy marks requests as HTTPS, sets `Origin` to the forwarded host so the Rails origin check passes (the CSRF token is still checked), and rewrites absolute redirects to relative ones. The tab opens in a new window because GitLab refuses to render inside a frame.
 
-The Gateway still serves `https://gitlab.gitlab.local` inside the cluster, as described above, and GitLab uses that URL in clone links and emails.
+The Gateway still serves `https://gitlab.gitlab.local` inside the cluster, as described above, and GitLab uses that URL in clone links and emails. CI jobs use the runner's internal `clone_url` to fetch source. The runner can execute validation pipelines in projects created in the playground; this repository's `.gitlab-ci.yml` must be added to a playground project before its Helm validation job can run there.
 
 ### Updating the playground
 
@@ -179,6 +182,7 @@ The sample values reference these Kubernetes Secret names and keys:
 | `gitlab-object-storage` | `connection` | Rails object-storage connection configuration |
 | `gitlab-registry-storage` | `config` | Container Registry storage configuration |
 | `gitlab-backup-s3cfg` | `config` | S3-compatible Toolbox backup access |
+| `lab-runner-auth` (in `runner`) | `runner-token`, `runner-registration-token` | Lab runner authentication; the registration key is empty for chart compatibility |
 
 These are references, not manifests containing credentials. Create the Secrets using a secrets controller or a secure out-of-repository workflow. Kubernetes Secret data is not automatically equivalent to a secrets manager; configure encryption at rest and restrict access with RBAC. The external Gitaly token must match the value configured on the Gitaly service.
 
@@ -206,4 +210,6 @@ See [operations and recovery](./docs/operations.md) for routine checks, backups,
 - [Storage planning](https://docs.gitlab.com/charts/installation/storage/)
 - [Backup and restore](https://docs.gitlab.com/charts/backup-restore/)
 - [Helm chart upgrades](https://docs.gitlab.com/charts/installation/upgrade/)
+- [GitLab Runner Helm chart](https://docs.gitlab.com/runner/install/kubernetes/)
+- [Runner creation workflow](https://docs.gitlab.com/ci/runners/new_creation_workflow/)
 - [Reference architectures](https://docs.gitlab.com/administration/reference_architectures/)

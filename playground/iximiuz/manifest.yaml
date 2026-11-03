@@ -16,9 +16,9 @@ markdown: |
   Startup takes about 10 minutes. The init tasks build the cluster, then deploy GitLab in the same stages as `make deploy-lab`:
 
   1. In-cluster PostgreSQL and Redis, with freshly generated credentials, plus the Gateway API CRDs.
-  2. A minimal GitLab release, so the chart generates its shared secrets.
-  3. RustFS object storage and its buckets.
-  4. The full lab release: object storage, Container Registry, Prometheus, and the HTTPS Gateway.
+  2. RustFS object storage and its buckets.
+  3. The full GitLab release: object storage, Container Registry, Prometheus, and the HTTPS Gateway.
+  4. A standalone GitLab Runner in the `runner` namespace, with one job at a time.
 
   ## Sign in
 
@@ -41,7 +41,7 @@ markdown: |
 
   Starting this playground needs a paid iximiuz plan. On the free tier, its machines are scaled down to 5 vCPU and 8 GiB in total, which is too small for GitLab.
 
-  This is a disposable evaluation lab. PostgreSQL, Redis, RustFS, and Gitaly use `emptyDir` volumes, so their data is lost when their pods are recreated. The cluster has about 11 GiB of allocatable memory, well below GitLab's sizing guidance. GitLab Runner is not installed.
+  This is a disposable evaluation lab. PostgreSQL, Redis, RustFS, and Gitaly use `emptyDir` volumes, so their data is lost when their pods are recreated. The cluster has about 11 GiB of allocatable memory, well below GitLab's sizing guidance. The runner executes one untagged job at a time in its own namespace.
 playground:
   networks:
     -
@@ -156,9 +156,14 @@ playground:
         EXAMPLE_VALUES := helm/values.production.example.yaml
         PRODUCTION_VALUES := helm/values.production.yaml
         LAB_VALUES := helm/values.lab.yaml
+        RUNNER_CHART_VERSION ?= $(shell tr -d '\n' < helm/runner-chart-version)
+        RUNNER_NAMESPACE ?= runner
+        RUNNER_RELEASE ?= lab-runner
+        RUNNER_CHART := gitlab/gitlab-runner
+        RUNNER_LAB_VALUES := helm/values.runner.lab.yaml
 
         .PHONY: validate check-production-config namespace gateway-crds deploy deploy-lab \
-        	lab-dependencies lab-object-storage lab-gitlab status
+        	lab-dependencies lab-object-storage lab-gitlab lab-runner status
 
         validate:
         	helm repo add gitlab $(CHART_REPOSITORY) --force-update
@@ -175,7 +180,12 @@ playground:
         		--values $(BASE_VALUES) \
         		--values $(LAB_VALUES) \
         		> /dev/null
-        	@echo "GitLab chart $(CHART_VERSION) rendered successfully."
+        	helm template $(RUNNER_RELEASE) $(RUNNER_CHART) \
+        		--version "$(RUNNER_CHART_VERSION)" \
+        		--namespace "$(RUNNER_NAMESPACE)" \
+        		--values $(RUNNER_LAB_VALUES) \
+        		> /dev/null
+        	@echo "GitLab chart $(CHART_VERSION) and Runner chart $(RUNNER_CHART_VERSION) rendered successfully."
 
         check-production-config:
         	@test -s "$(PRODUCTION_VALUES)" || { \
@@ -238,12 +248,13 @@ playground:
         		--values $(BASE_VALUES) \
         		--values $(PRODUCTION_VALUES)
 
-        # deploy-lab runs the three lab stages in order. The Iximiuz playground runs
+        # deploy-lab runs the lab stages in order. The Iximiuz playground runs
         # each stage as its own init task, so startup progress is visible per stage.
         deploy-lab:
         	$(MAKE) lab-dependencies
         	$(MAKE) lab-object-storage
         	$(MAKE) lab-gitlab
+        	$(MAKE) lab-runner
 
         lab-dependencies: gateway-crds
         	kubectl create namespace "$(NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
@@ -278,6 +289,24 @@ playground:
         		--values $(BASE_VALUES) \
         		--values $(LAB_VALUES)
 
+        lab-runner:
+        	kubectl -n $(NAMESPACE) rollout status deployment/gitlab-webservice-default --timeout=10m
+        	python3 k8s/lab/bootstrap-runner.py
+        	helm repo add gitlab $(CHART_REPOSITORY) --force-update
+        	helm repo update gitlab
+        	helm template $(RUNNER_RELEASE) $(RUNNER_CHART) \
+        		--version "$(RUNNER_CHART_VERSION)" \
+        		--namespace "$(RUNNER_NAMESPACE)" \
+        		--values $(RUNNER_LAB_VALUES) \
+        		> /dev/null
+        	helm upgrade --install $(RUNNER_RELEASE) $(RUNNER_CHART) \
+        		--version "$(RUNNER_CHART_VERSION)" \
+        		--namespace "$(RUNNER_NAMESPACE)" \
+        		--create-namespace \
+        		--timeout 10m \
+        		--wait \
+        		--values $(RUNNER_LAB_VALUES)
+
         status:
         	helm status $(RELEASE) --namespace "$(NAMESPACE)"
         	kubectl get pods,services --namespace "$(NAMESPACE)"
@@ -289,6 +318,14 @@ playground:
       mode: "644"
       content: |
         10.5.4
+      machines:
+        - "dev-machine"
+    -
+      path: "/opt/gitlab-k8s/helm/runner-chart-version"
+      owner: "root"
+      mode: "644"
+      content: |
+        0.94.1
       machines:
         - "dev-machine"
     -
@@ -510,6 +547,65 @@ playground:
       machines:
         - "dev-machine"
     -
+      path: "/opt/gitlab-k8s/helm/values.runner.lab.yaml"
+      owner: "root"
+      mode: "644"
+      content: |
+        # Standalone runner for the disposable iximiuz playground.
+        # The authentication token is created at startup in the runner namespace.
+        gitlabUrl: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181/
+        concurrent: 1
+        checkInterval: 5
+
+        serviceAccount:
+          create: true
+
+        rbac:
+          create: true
+          clusterWideAccess: false
+          rules:
+            - resources: [pods]
+              verbs: [create, delete, get, list, watch]
+            - resources: [pods/attach, pods/exec]
+              verbs: [create, delete, get, patch]
+            - resources: [pods/log]
+              verbs: [get, list]
+            - resources: [secrets]
+              verbs: [create, delete, get, update]
+            - resources: [serviceaccounts]
+              verbs: [get]
+            - resources: [services]
+              verbs: [create, get]
+
+        runners:
+          secret: lab-runner-auth
+          locked: null
+          config: |
+            [[runners]]
+              clone_url = "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
+              request_concurrency = 2
+              [runners.kubernetes]
+                namespace = "runner"
+                image = "alpine:3.22"
+                privileged = false
+                cpu_request = "100m"
+                cpu_limit = "500m"
+                memory_request = "128Mi"
+                memory_limit = "512Mi"
+                helper_cpu_request = "50m"
+                helper_cpu_limit = "250m"
+                helper_memory_request = "128Mi"
+                helper_memory_limit = "256Mi"
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+      machines:
+        - "dev-machine"
+    -
       path: "/opt/gitlab-k8s/helm/values.production.example.yaml"
       owner: "root"
       mode: "644"
@@ -536,6 +632,138 @@ playground:
 
         certmanager-issuer:
           email: platform@example.invalid
+      machines:
+        - "dev-machine"
+    -
+      path: "/opt/gitlab-k8s/k8s/lab/bootstrap-runner.py"
+      owner: "root"
+      mode: "644"
+      content: |
+        #!/usr/bin/env python3
+        """Create an instance runner and its Kubernetes Secret in a fresh lab session."""
+
+        import base64
+        import contextlib
+        import json
+        import socket
+        import subprocess
+        import time
+        import urllib.parse
+        import urllib.request
+
+
+        RUNNER_NAMESPACE = "runner"
+        RUNNER_SECRET = "lab-runner-auth"
+        WEB_DEPLOYMENT = "deployment/gitlab-webservice-default"
+
+
+        def kubectl(*args, input_text=None):
+            return subprocess.run(
+                ["kubectl", *args], input=input_text, text=True, capture_output=True, check=True
+            ).stdout
+
+
+        def rails(code):
+            return kubectl(
+                "-n", "gitlab", "exec", WEB_DEPLOYMENT, "-c", "webservice", "--",
+                "/srv/gitlab/bin/rails", "runner", code,
+            )
+
+
+        @contextlib.contextmanager
+        def gitlab_api():
+            # The iximiuz dev machine has kubeconfig but is outside cluster DNS and
+            # Service routing. Forward Workhorse locally for the one-time API call.
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                port = listener.getsockname()[1]
+            forward = subprocess.Popen(
+                ["kubectl", "-n", "gitlab", "port-forward", "svc/gitlab-webservice-default", f"{port}:8181"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            try:
+                for _ in range(60):
+                    if forward.poll() is not None:
+                        raise RuntimeError("GitLab API port-forward exited before becoming ready")
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=1):
+                            break
+                    except OSError:
+                        time.sleep(0.5)
+                else:
+                    raise TimeoutError("GitLab API port-forward did not become ready")
+                yield f"http://127.0.0.1:{port}/api/v4"
+            finally:
+                forward.terminate()
+                forward.wait(timeout=10)
+
+
+        def main():
+            namespace = kubectl("create", "namespace", RUNNER_NAMESPACE, "--dry-run=client", "-o", "yaml")
+            kubectl("apply", "-f", "-", input_text=namespace)
+            if subprocess.run(
+                ["kubectl", "-n", RUNNER_NAMESPACE, "get", "secret", RUNNER_SECRET],
+                capture_output=True,
+            ).returncode == 0:
+                print("Runner authentication Secret already exists; keeping its token")
+                return
+
+            # Rails creates a short-lived, narrowly scoped PAT. Only the token and ID
+            # are returned to this process; the token is never put in task logs.
+            create_pat = '''require "json"
+        require "securerandom"
+        user = User.find_by_username("root") or raise "root account missing"
+        pat = user.personal_access_tokens.create!(name: "iximiuz-runner-bootstrap", scopes: ["create_runner"], expires_at: 1.day.from_now)
+        raw = SecureRandom.alphanumeric(20)
+        pat.set_token(raw)
+        pat.save!
+        puts JSON.generate({"id" => pat.id, "token" => raw})'''
+            with gitlab_api() as api:
+                pat = json.loads(rails(create_pat).splitlines()[-1])
+                try:
+                    request = urllib.request.Request(
+                        api + "/user/runners",
+                        data=urllib.parse.urlencode({
+                            "runner_type": "instance_type",
+                            "description": "iximiuz lab runner",
+                            "run_untagged": "true",
+                        }).encode(),
+                        headers={
+                            "PRIVATE-TOKEN": pat["token"],
+                            "Host": "gitlab.gitlab.local",
+                            "X-Forwarded-Proto": "https",
+                        },
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(request, timeout=60) as response:
+                        runner = json.load(response)
+                    token = runner["token"]
+                    if not token.startswith("glrt-"):
+                        raise RuntimeError("GitLab did not return a runner authentication token")
+                    secret = {
+                        "apiVersion": "v1",
+                        "kind": "Secret",
+                        "metadata": {"name": RUNNER_SECRET, "namespace": RUNNER_NAMESPACE},
+                        "type": "Opaque",
+                        "data": {
+                            "runner-registration-token": "",
+                            "runner-token": base64.b64encode(token.encode()).decode(),
+                        },
+                    }
+                    kubectl("apply", "-f", "-", input_text=json.dumps(secret))
+                    print(f"Created GitLab instance runner {runner['id']} and its namespace Secret")
+                finally:
+                    revoke = urllib.request.Request(
+                        api + "/personal_access_tokens/self",
+                        headers={"PRIVATE-TOKEN": pat["token"]},
+                        method="DELETE",
+                    )
+                    with urllib.request.urlopen(revoke, timeout=60):
+                        pass
+
+
+        if __name__ == "__main__":
+            main()
       machines:
         - "dev-machine"
     -
@@ -1492,13 +1720,25 @@ playground:
         export HOME=/root KUBECONFIG=/root/.kube/config DEBIAN_FRONTEND=noninteractive
         cd /opt/gitlab-k8s
         make lab-gitlab
+    init_dev_machine_55_runner:
+      machine: "dev-machine"
+      init: true
+      user: "root"
+      timeout_seconds: 1200
+      needs:
+        - "init_dev_machine_50_gitlab"
+      run: |
+        set -Eeuo pipefail
+        export HOME=/root KUBECONFIG=/root/.kube/config DEBIAN_FRONTEND=noninteractive
+        cd /opt/gitlab-k8s
+        make lab-runner
     init_dev_machine_60_browser_access:
       machine: "dev-machine"
       init: true
       user: "root"
       timeout_seconds: 900
       needs:
-        - "init_dev_machine_50_gitlab"
+        - "init_dev_machine_55_runner"
       run: |
         set -Eeuo pipefail
         export HOME=/root KUBECONFIG=/root/.kube/config DEBIAN_FRONTEND=noninteractive
