@@ -1,0 +1,2 @@
+# The generated YAML embeds Makefile recipes as indented block scalar text.
+playground/iximiuz/manifest.yaml whitespace=-space-before-tab

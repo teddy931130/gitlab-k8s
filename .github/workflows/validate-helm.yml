@@ -58,3 +58,12 @@ jobs:
             --values helm/values.yaml \
             --values helm/values.lab.yaml \
             > /dev/null
+          RUNNER_CHART_VERSION="$(tr -d '\n' < helm/runner-chart-version)"
+          helm pull gitlab/gitlab-runner --version "$RUNNER_CHART_VERSION" --destination .tmp
+          helm lint ".tmp/gitlab-runner-${RUNNER_CHART_VERSION}.tgz" \
+            --values helm/values.runner.lab.yaml
+          helm template lab-runner gitlab/gitlab-runner \
+            --version "$RUNNER_CHART_VERSION" \
+            --namespace runner \
+            --values helm/values.runner.lab.yaml \
+            > /dev/null

@@ -7,6 +7,7 @@ This guide covers the routine work around the GitLab Helm release. Adapt backup 
 - Check `helm status gitlab -n gitlab`, `kubectl get pods,services -n gitlab`, and pod events after installs and upgrades.
 - Monitor the Kubernetes workloads and the external PostgreSQL, Redis/Valkey, Gitaly, and object-storage services. A healthy set of Pods alone does not establish that GitLab's dependencies are healthy.
 - In the disposable lab only, RustFS provides object storage and Prometheus scrapes GitLab components. Both are in-cluster demonstrations, not substitutes for durable object storage or a production monitoring stack.
+- In the disposable lab, check `helm status lab-runner -n runner` and `kubectl get pods -n runner`. The standalone runner accepts one untagged job at a time; each job creates a temporary pod in `runner`. Inspect the runner manager logs and job trace if a pipeline stays pending or fails during checkout.
 - Alert on persistent-volume capacity where applicable, database and Redis availability, Gitaly health, object-storage errors, certificate expiry, and failed backup jobs.
 - Confirm the Gateway has an external address and that DNS, HTTPS, SSH, Registry, and KAS access work as intended.
 
@@ -34,6 +35,8 @@ The `helm/chart-version` file is the single chart version pin. To upgrade:
 3. Take a backup and verify that the Rails secrets and external-service recovery procedures are available.
 4. Update the pin, run `make validate`, then use `make deploy` during a maintenance window appropriate to the release.
 5. Verify migrations, application health, background jobs, integrations, and data access after rollout.
+
+The lab runner has a separate pin in `helm/runner-chart-version`. Keep its application major and minor version aligned with GitLab, render its values during validation, and verify a project pipeline after a runner upgrade.
 
 Zero-downtime upgrades require additional replica and rolling-update configuration from GitLab's [recommended deployment settings](https://docs.gitlab.com/charts/installation/upgrade/#recommended-deployment-settings). The starter values do not claim zero-downtime behavior.
 

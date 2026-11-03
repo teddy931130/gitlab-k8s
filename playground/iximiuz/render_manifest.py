@@ -29,9 +29,12 @@ WEB_NODE_PORT = int(
 LAB_FILES = [
     "Makefile",
     "helm/chart-version",
+    "helm/runner-chart-version",
     "helm/values.yaml",
     "helm/values.lab.yaml",
+    "helm/values.runner.lab.yaml",
     "helm/values.production.example.yaml",
+    "k8s/lab/bootstrap-runner.py",
     "k8s/lab/configure-object-storage.py",
     "k8s/lab/dependencies.yaml",
     "k8s/lab/object-storage.yaml",
@@ -243,8 +246,10 @@ chown -R laborant:laborant /home/laborant/.kube
             dev, PRELUDE + "make lab-object-storage\n", ["init_dev_machine_30_gitlab_dependencies"], timeout=900),
         "init_dev_machine_50_gitlab": task(
             dev, PRELUDE + "make lab-gitlab\n", ["init_dev_machine_40_object_storage"], timeout=2700),
+        "init_dev_machine_55_runner": task(
+            dev, PRELUDE + "make lab-runner\n", ["init_dev_machine_50_gitlab"], timeout=1200),
         "init_dev_machine_60_browser_access": task(
-            dev, BROWSER_ACCESS, ["init_dev_machine_50_gitlab"], timeout=900),
+            dev, BROWSER_ACCESS, ["init_dev_machine_55_runner"], timeout=900),
     })
     return tasks
 
@@ -285,9 +290,9 @@ MARKDOWN = f"""A fresh kubeadm cluster (one control plane, two workers, and a de
 Startup takes about 10 minutes. The init tasks build the cluster, then deploy GitLab in the same stages as `make deploy-lab`:
 
 1. In-cluster PostgreSQL and Redis, with freshly generated credentials, plus the Gateway API CRDs.
-2. A minimal GitLab release, so the chart generates its shared secrets.
-3. RustFS object storage and its buckets.
-4. The full lab release: object storage, Container Registry, Prometheus, and the HTTPS Gateway.
+2. RustFS object storage and its buckets.
+3. The full GitLab release: object storage, Container Registry, Prometheus, and the HTTPS Gateway.
+4. A standalone GitLab Runner in the `runner` namespace, with one job at a time.
 
 ## Sign in
 
@@ -310,7 +315,7 @@ To use the Gateway itself, run `labctl kube-proxy` on your machine, then port-fo
 
 Starting this playground needs a paid iximiuz plan. On the free tier, its machines are scaled down to 5 vCPU and 8 GiB in total, which is too small for GitLab.
 
-This is a disposable evaluation lab. PostgreSQL, Redis, RustFS, and Gitaly use `emptyDir` volumes, so their data is lost when their pods are recreated. The cluster has about 11 GiB of allocatable memory, well below GitLab's sizing guidance. GitLab Runner is not installed.
+This is a disposable evaluation lab. PostgreSQL, Redis, RustFS, and Gitaly use `emptyDir` volumes, so their data is lost when their pods are recreated. The cluster has about 11 GiB of allocatable memory, well below GitLab's sizing guidance. The runner executes one untagged job at a time in its own namespace.
 """
 
 

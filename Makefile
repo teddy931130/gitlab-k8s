@@ -9,9 +9,14 @@ BASE_VALUES := helm/values.yaml
 EXAMPLE_VALUES := helm/values.production.example.yaml
 PRODUCTION_VALUES := helm/values.production.yaml
 LAB_VALUES := helm/values.lab.yaml
+RUNNER_CHART_VERSION ?= $(shell tr -d '\n' < helm/runner-chart-version)
+RUNNER_NAMESPACE ?= runner
+RUNNER_RELEASE ?= lab-runner
+RUNNER_CHART := gitlab/gitlab-runner
+RUNNER_LAB_VALUES := helm/values.runner.lab.yaml
 
 .PHONY: validate check-production-config namespace gateway-crds deploy deploy-lab \
-	lab-dependencies lab-object-storage lab-gitlab status
+	lab-dependencies lab-object-storage lab-gitlab lab-runner status
 
 validate:
 	helm repo add gitlab $(CHART_REPOSITORY) --force-update
@@ -28,7 +33,12 @@ validate:
 		--values $(BASE_VALUES) \
 		--values $(LAB_VALUES) \
 		> /dev/null
-	@echo "GitLab chart $(CHART_VERSION) rendered successfully."
+	helm template $(RUNNER_RELEASE) $(RUNNER_CHART) \
+		--version "$(RUNNER_CHART_VERSION)" \
+		--namespace "$(RUNNER_NAMESPACE)" \
+		--values $(RUNNER_LAB_VALUES) \
+		> /dev/null
+	@echo "GitLab chart $(CHART_VERSION) and Runner chart $(RUNNER_CHART_VERSION) rendered successfully."
 
 check-production-config:
 	@test -s "$(PRODUCTION_VALUES)" || { \
@@ -91,12 +101,13 @@ deploy: check-production-config
 		--values $(BASE_VALUES) \
 		--values $(PRODUCTION_VALUES)
 
-# deploy-lab runs the three lab stages in order. The Iximiuz playground runs
+# deploy-lab runs the lab stages in order. The Iximiuz playground runs
 # each stage as its own init task, so startup progress is visible per stage.
 deploy-lab:
 	$(MAKE) lab-dependencies
 	$(MAKE) lab-object-storage
 	$(MAKE) lab-gitlab
+	$(MAKE) lab-runner
 
 lab-dependencies: gateway-crds
 	kubectl create namespace "$(NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
@@ -130,6 +141,24 @@ lab-gitlab:
 		--wait \
 		--values $(BASE_VALUES) \
 		--values $(LAB_VALUES)
+
+lab-runner:
+	kubectl -n $(NAMESPACE) rollout status deployment/gitlab-webservice-default --timeout=10m
+	python3 k8s/lab/bootstrap-runner.py
+	helm repo add gitlab $(CHART_REPOSITORY) --force-update
+	helm repo update gitlab
+	helm template $(RUNNER_RELEASE) $(RUNNER_CHART) \
+		--version "$(RUNNER_CHART_VERSION)" \
+		--namespace "$(RUNNER_NAMESPACE)" \
+		--values $(RUNNER_LAB_VALUES) \
+		> /dev/null
+	helm upgrade --install $(RUNNER_RELEASE) $(RUNNER_CHART) \
+		--version "$(RUNNER_CHART_VERSION)" \
+		--namespace "$(RUNNER_NAMESPACE)" \
+		--create-namespace \
+		--timeout 10m \
+		--wait \
+		--values $(RUNNER_LAB_VALUES)
 
 status:
 	helm status $(RELEASE) --namespace "$(NAMESPACE)"
