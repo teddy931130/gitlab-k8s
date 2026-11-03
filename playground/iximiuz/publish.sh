@@ -18,7 +18,7 @@ die() { echo "$*" >&2; exit 1; }
 command -v labctl >/dev/null || die "labctl is required: https://github.com/iximiuz/labctl"
 labctl auth whoami >/dev/null 2>&1 || die "run: labctl auth login"
 
-next_manifest="$(mktemp --suffix=.yaml "${manifest}.next.XXXXXX")"
+next_manifest="$(mktemp "${manifest}.next.XXXXXX")"
 trap 'rm -f "$next_manifest"' EXIT
 render_args=(--output "$next_manifest")
 [ -n "${PLAYGROUND_NAME:-}" ] && render_args+=(--name "$PLAYGROUND_NAME")

@@ -84,7 +84,7 @@ The checked-in [lab values](./helm/values.lab.yaml) and [lab manifests](./k8s/la
 
    This installs the Gateway API and Envoy Gateway CRDs, pre-renders the production values, then runs `helm upgrade --install` with the pinned chart and waits up to 20 minutes for resources to become ready. The `ENVOY_GATEWAY_VERSION` in the Makefile must match the bundled Envoy Gateway dependency of the pinned GitLab chart. It requires a working Kubernetes context and the external services and Secrets to be ready first.
 
-For the disposable playground setup only, provision the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. The target runs four stages, which are also separate targets: `lab-dependencies` installs the Gateway API CRDs, PostgreSQL, and Redis; `lab-object-storage` generates RustFS credentials, starts RustFS, and creates its buckets and the GitLab object-storage Secrets; `lab-gitlab` installs the chart with object storage, Registry, Prometheus, and HTTPS enabled; `lab-runner` creates an instance runner and installs the separately pinned GitLab Runner chart in the `runner` namespace. The bootstrap generates a short-lived `create_runner` access token within the lab, revokes it after creating the runner, and stores the runner authentication token only in a Kubernetes Secret. The PostgreSQL, Redis, RustFS, and Gitaly data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
+For a manual deployment of the disposable lab to your own cluster, create the `gitlab-postgresql-password` and `gitlab-gitaly-token` Secrets, then run `make deploy-lab`. You do not need to create these Secrets when starting the Iximiuz playground: its startup tasks generate them automatically. The `deploy-lab` target runs four stages, which are also separate targets: `lab-dependencies` installs the Gateway API CRDs, PostgreSQL, and Redis; `lab-object-storage` generates RustFS credentials, starts RustFS, and creates its buckets and the GitLab object-storage Secrets; `lab-gitlab` installs the chart with object storage, Registry, Prometheus, and HTTPS enabled; `lab-runner` creates an instance runner and installs the separately pinned GitLab Runner chart in the `runner` namespace. The bootstrap generates a short-lived `create_runner` access token within the lab, revokes it after creating the runner, and stores the runner authentication token only in a Kubernetes Secret. The PostgreSQL, Redis, RustFS, and Gitaly data directories use `emptyDir`; recreating one of those pods loses its data. This setup is disposable and must not be used for production data. Export and verify a backup before planned PostgreSQL major-version upgrades.
 
 8. Inspect deployment health:
 
@@ -131,7 +131,7 @@ kubectl get secret gitlab-gitlab-initial-root-password \
 
 ## Iximiuz Labs playground
 
-**Playground:** <https://labs.iximiuz.com/playgrounds/gitlab-k8s-lab-1781ac3c>
+**Playground:** <https://labs.iximiuz.com/playgrounds/gitlab-k8s-lab-personal-7a7006b8>
 
 Click **Start** and the playground builds a fresh kubeadm cluster, then deploys this lab. Nothing has to be run by hand. Allow about 10–15 minutes for startup. When it finishes, click the **GitLab** tab to open GitLab in a new browser tab and sign in as `root`. The generated password is in `~/gitlab-root-password` on the dev machine.
 
@@ -156,12 +156,12 @@ bash playground/iximiuz/publish.sh
 `publish.sh` renders to a temporary file, runs `labctl playground update`, and only then records the result in `manifest.yaml`. Running sessions keep the old definition; start a new session to test a change:
 
 ```sh
-labctl playground start gitlab-k8s-lab-1781ac3c
+labctl playground start gitlab-k8s-lab-personal-7a7006b8
 ```
 
 `python3 -m unittest discover -s tests` checks that the checked-in manifest matches the sources, that every lab file is embedded, and that the init tasks form a valid dependency graph.
 
-To create a separate copy, for example on another account, render it under a new name, create it from the `k8s-omni` base, then set `DEFAULT_NAME` in `render_manifest.py` to the suffixed name that `labctl` prints:
+To create a separate copy, for example on another account, render it under a new name and create it from the `k8s-omni` base. Then set `DEFAULT_NAME` in `render_manifest.py` to the suffixed name that `labctl` prints:
 
 ```sh
 python3 playground/iximiuz/render_manifest.py --name gitlab-k8s-lab --output /tmp/gitlab-k8s-lab.yaml

@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_NAME = "gitlab-k8s-lab-1781ac3c"
+DEFAULT_NAME = "gitlab-k8s-lab-personal-7a7006b8"
 DEFAULT_OUTPUT = ROOT / "playground/iximiuz/manifest.yaml"
 
 LAB_DIR = "/opt/gitlab-k8s"
